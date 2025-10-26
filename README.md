@@ -1,6 +1,6 @@
 # Apache Jira Scraper — Enhanced ETL Pipeline
 
-This repository provides a **robust Python ETL pipeline** to extract issues from Apache Jira, transform them, and produce a JSONL corpus suitable for LLM training.
+This repository provides a **robust Python ETL pipeline** to extract issues from Apache Jira, transform them, and produce a JSONL corpus suitable for LLM training. The pipeline is designed with fault tolerance, incremental updates, and data quality as primary considerations.
 
 ## Project Scope
 - Scrapes Apache projects: **HADOOP, SPARK, KAFKA**
@@ -37,6 +37,19 @@ This repository provides a **robust Python ETL pipeline** to extract issues from
 └─────────────────┘                 └─────────────────┘
 ```
 
+### Key Innovations
+
+- **Advanced Text Cleaning Algorithm**: Our pipeline implements sophisticated pattern recognition to identify and remove error logs, stack traces, and other noise that would confuse LLM training, while preserving the valuable technical context.
+
+- **Derived Task Generation**: Beyond simple extraction, we generate multiple derived tasks from each issue:
+  - Automatic summarization that combines title and key description elements
+  - Multi-label classification based on content analysis
+  - Question-answer pair extraction from discussions
+
+- **Fault-Tolerant Architecture**: The system is designed to handle real-world challenges like network failures, rate limiting, and malformed data with graceful degradation rather than complete failure.
+
+- **Incremental Processing**: Our checkpoint system tracks both pagination position and timestamp of the most recently updated issue, enabling efficient resumption and incremental updates.
+
 ### Data Flow
 1. **Configuration Loading**: `main.py` loads settings from `config.json`
 2. **Extraction**: `extract.py` fetches data from Jira API and saves to `data/raw/`
@@ -47,14 +60,51 @@ This repository provides a **robust Python ETL pipeline** to extract issues from
 
 ### Extraction
 - **Pagination**: Handles Jira's paginated results with checkpointing
+  - Uses `startAt` and `maxResults` parameters to fetch pages of issues
+  - Saves checkpoint after each page to enable resumption
+  - Tracks total issue count to determine when all pages have been fetched
 - **Rate limiting**: Handles HTTP 429 responses with configurable sleep time
+  - Automatically sleeps when rate limits are hit
+  - Configurable delay between requests to avoid hitting limits
 - **Error handling**: Uses exponential backoff for 5xx errors
+  - Retries with increasing delays: `wait = backoff_base ** attempt`
+  - Configurable maximum retry attempts
+  - Detailed logging of all retry attempts
 - **Incremental updates**: Uses timestamps to only fetch changed issues
+  - Tracks last update timestamp in checkpoint files
+  - Uses JQL filters like `updated >= "2025-01-01"` to fetch only changed issues
+  - Configurable lookback period for first run
 
 ### Transformation
-- **Advanced Text Cleaning**: Normalizes text, removes error logs, replaces URLs
-- **Derived tasks**: Generates summarization, classification, and QA pairs
-- **Data validation**: Ensures data quality and consistency
+- **Advanced Text Cleaning**: 
+  - Normalizes whitespace and newlines for consistent formatting
+  - Removes error logs and stack traces using pattern recognition
+  - Identifies and removes entire error blocks, not just individual lines
+  - Replaces long CI system URLs with simple placeholders
+  - Handles Jira-specific formatting artifacts
+- **Derived tasks**: Generates additional data for LLM training:
+  - **Summarization**: Creates concise summaries combining title and description
+  - **Classification**: Multi-label classification based on issue type, summary, and labels
+  - **QA pairs**: Extracts question-answer pairs from descriptions and comments
+- **Data validation**: 
+  - Validates all transformed records against schema
+  - Checks for required fields and proper formatting
+  - Validates date formats and field types
+  - Gracefully handles malformed data
+
+### Technical Implementation Details
+- **HTTP Request Management**:
+  - Uses `requests` library with session management
+  - Configurable SSL verification (can be disabled in corporate environments)
+  - Custom headers and authentication handling
+- **JSON Processing**:
+  - Efficient streaming JSON parsing for large responses
+  - Handles nested JSON structures in Jira responses
+  - Preserves original data while adding derived fields
+- **File Operations**:
+  - Atomic file writes to prevent corruption
+  - Directory creation with proper error handling
+  - JSONL format for easy streaming and processing
 
 ## Data Model
 
@@ -63,8 +113,8 @@ The pipeline produces JSONL files with the following structure:
 ```json
 {
   "id": "HADOOP-123",
-  "title": "Issue title",
-  "description": "Detailed description...",
+  "title": "Bug in parser",
+  "description": "The JSON parser fails when given empty input.",
   "status": "Open",
   "priority": "Major",
   "reporter": "John Doe",
@@ -76,12 +126,12 @@ The pipeline produces JSONL files with the following structure:
   "comments": [
     {
       "author": "Alice",
-      "body": "Comment text...",
+      "body": "I can reproduce this.",
       "created": "2025-01-02T12:34:56.789Z"
     }
   ],
   "derived_tasks": {
-    "summary": "Concise summary of the issue",
+    "summary": "Bug in parser - The JSON parser fails when given empty input",
     "classifications": ["bug", "performance"],
     "qa_pairs": [
       {
@@ -93,6 +143,32 @@ The pipeline produces JSONL files with the following structure:
 }
 ```
 
+### Data Fields Explained
+
+#### Core Fields
+- **id**: Unique identifier from Jira (e.g., "HADOOP-123")
+- **title**: Issue title/summary
+- **description**: Full issue description with cleaned text
+- **status**: Current issue status (e.g., "Open", "In Progress", "Resolved")
+- **priority**: Issue priority (e.g., "Major", "Critical")
+- **reporter**: Person who reported the issue
+- **assignee**: Person assigned to the issue
+- **created**: ISO 8601 timestamp of creation
+- **updated**: ISO 8601 timestamp of last update
+- **labels**: Array of labels applied to the issue
+- **components**: Array of components affected by the issue
+
+#### Comments
+Array of comment objects with:
+- **author**: Comment author name
+- **body**: Cleaned comment text
+- **created**: ISO 8601 timestamp of comment creation
+
+#### Derived Tasks
+- **summary**: Concise summary combining title and key description elements
+- **classifications**: Array of classifications derived from issue content
+- **qa_pairs**: Array of question-answer pairs extracted from description and comments
+
 ## Design Trade-offs
 
 - **File-based Storage**: Simple, portable, compatible with LLM training pipelines
@@ -100,6 +176,88 @@ The pipeline produces JSONL files with the following structure:
 - **Page-level Checkpointing**: Balances overhead and recovery granularity
 - **Rule-based Text Cleaning**: Fast, deterministic, transparent
 - **Incremental Updates**: Reduces API load, faster subsequent runs
+
+## Configuration Options
+
+The `config.json` file provides extensive configuration options:
+
+```json
+{
+  "jira_base_url": "https://issues.apache.org/jira",
+  "projects": ["HADOOP", "SPARK", "KAFKA"],
+  "max_results": 50,
+  "polite_delay_seconds": 1,
+  "rate_limit_sleep_seconds": 5,
+  "backoff_base": 2,
+  "max_attempts": 3,
+  "incremental": true,
+  "lookback_days": 7,
+  "verify_ssl": false
+}
+```
+
+### Configuration Parameters
+
+- **jira_base_url**: Base URL for the Jira API
+- **projects**: List of Jira project keys to extract
+- **max_results**: Number of issues to fetch per page (max 100 for Jira)
+- **polite_delay_seconds**: Delay between successful requests to avoid rate limits
+- **rate_limit_sleep_seconds**: Time to sleep when hitting a rate limit (HTTP 429)
+- **backoff_base**: Base for exponential backoff calculation
+- **max_attempts**: Maximum number of retry attempts for failed requests
+- **incremental**: Whether to use incremental updates based on timestamps
+- **lookback_days**: Days to look back for the first run with incremental updates
+- **verify_ssl**: Whether to verify SSL certificates (can be disabled in corporate environments)
+
+## Error Handling & Fault Tolerance
+
+The pipeline includes several mechanisms to ensure reliability:
+
+- **Checkpointing**: 
+  - Saves progress after each page of issues is processed
+  - Stores both pagination position and last update timestamp
+  - Enables efficient resumption after interruptions
+  - Separate checkpoint files for each project
+
+- **Exponential backoff**: 
+  - Retries with increasing delays for transient errors
+  - Formula: `wait = backoff_base ** attempt`
+  - Configurable maximum attempts
+  - Different handling for different error types (429 vs 5xx)
+
+- **Graceful degradation**: 
+  - Continues processing even if some issues fail
+  - Skips problematic issues rather than failing the entire run
+  - Records errors in logs for later investigation
+
+- **Comprehensive logging**: 
+  - Detailed logs for debugging and monitoring
+  - Separate log files for extraction and transformation
+  - Configurable log levels
+  - Timestamps and context for all log entries
+
+## Testing Framework
+
+The project includes a comprehensive test suite to verify functionality:
+
+- **Unit Tests**: Test individual functions and methods
+- **Integration Tests**: Test interactions between components
+- **Mock Tests**: Use mocks to simulate API responses and errors
+
+### Test Coverage
+
+- **Extraction Tests**:
+  - Test pagination handling
+  - Test rate limit handling
+  - Test error handling and retries
+  - Test checkpoint saving and loading
+  - Test incremental updates
+
+- **Transformation Tests**:
+  - Test text cleaning functions
+  - Test derived task generation
+  - Test data validation
+  - Test error handling during transformation
 
 ## Future Improvements
 
@@ -113,7 +271,11 @@ The pipeline produces JSONL files with the following structure:
 
 ## Setup and Usage
 
-### Quick Setup (Linux)
+### Automatic Setup Scripts
+
+The project includes automated setup scripts that handle all the necessary setup steps for you:
+
+#### Linux Setup (setup.sh)
 
 ```bash
 # Navigate to the project directory
@@ -125,6 +287,15 @@ chmod +x setup.sh
 # Run the setup shell script
 ./setup.sh
 ```
+
+This script automatically:
+1. Creates a Python virtual environment
+2. Installs all required dependencies
+3. Sets up necessary data directories
+4. Handles SSL certificate issues in corporate environments
+5. Provides instructions for activating the environment
+
+The setup script includes error handling and will attempt alternative installation methods if the standard approach fails (such as using `--trusted-host` flags for SSL issues).
 
 ### Manual Setup
 
@@ -202,15 +373,65 @@ make worker
 make worker-interval INTERVAL=1
 ```
 
-## Error Handling & Testing
+## Error Handling & Fault Tolerance
 
-- **Checkpointing**: Saves progress after each page of issues
-- **Exponential backoff**: Retries with increasing delays for transient errors
-- **Graceful degradation**: Continues processing even if some issues fail
-- **Comprehensive logging**: Detailed logs for debugging
-- **Unit tests**: Test suite for extraction and transformation components
+The pipeline includes several mechanisms to ensure reliability:
 
-Run tests with:
+- **Checkpointing**: 
+  - Saves progress after each page of issues is processed
+  - Stores both pagination position and last update timestamp
+  - Enables efficient resumption after interruptions
+  - Separate checkpoint files for each project
+
+- **Exponential backoff**: 
+  - Retries with increasing delays for transient errors
+  - Formula: `wait = backoff_base ** attempt`
+  - Configurable maximum attempts
+  - Different handling for different error types (429 vs 5xx)
+
+- **Graceful degradation**: 
+  - Continues processing even if some issues fail
+  - Skips problematic issues rather than failing the entire run
+  - Records errors in logs for later investigation
+
+- **Comprehensive logging**: 
+  - Detailed logs for debugging and monitoring
+  - Separate log files for extraction and transformation
+  - Configurable log levels
+  - Timestamps and context for all log entries
+
+## Testing Framework
+
+The project includes a comprehensive test suite to verify functionality:
+
+- **Unit Tests**: Test individual functions and methods
+- **Integration Tests**: Test interactions between components
+- **Mock Tests**: Use mocks to simulate API responses and errors
+
+### Test Coverage
+
+- **Extraction Tests**:
+  - Test pagination handling
+  - Test rate limit handling
+  - Test error handling and retries
+  - Test checkpoint saving and loading
+  - Test incremental updates
+
+- **Transformation Tests**:
+  - Test text cleaning functions
+  - Test derived task generation
+  - Test data validation
+  - Test error handling during transformation
+
+### Running Tests
+
 ```bash
+# Run all tests
 make test
+
+# Run specific test modules
+make test-extract
+make test-transform
 ```
+
+The test suite uses Python's unittest framework and includes mocks for external dependencies to enable reliable testing without actual API calls.
