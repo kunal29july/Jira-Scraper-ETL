@@ -50,6 +50,13 @@ This repository provides a **robust Python ETL pipeline** to extract issues from
 
 - **Incremental Processing**: Our checkpoint system tracks both pagination position and timestamp of the most recently updated issue, enabling efficient resumption and incremental updates.
 
+- **Automated Scheduling with Health Monitoring**: The worker component provides:
+  - Configurable scheduled execution at regular intervals
+  - Health check mechanism that tracks successful runs
+  - Status reporting through a JSON status file
+  - Graceful shutdown handling
+  - Command-line configuration for flexible deployment
+
 ### Data Flow
 1. **Configuration Loading**: `main.py` loads settings from `config.json`
 2. **Extraction**: `extract.py` fetches data from Jira API and saves to `data/raw/`
@@ -332,7 +339,9 @@ python main.py --project HADOOP
 python main.py --clean
 ```
 
-### Scheduled Execution
+### Scheduled Execution with Worker
+
+The worker component provides automated scheduling with health monitoring:
 
 ```bash
 # Run every 6 hours (default)
@@ -340,6 +349,28 @@ python worker.py
 
 # Run every hour
 python worker.py --interval 1
+
+# Skip the initial run at startup
+python worker.py --no-initial-run
+```
+
+The worker process:
+1. Runs the ETL pipeline immediately at startup (unless --no-initial-run is specified)
+2. Schedules subsequent runs at the specified interval
+3. Maintains a status file at `data/worker_status.json` with:
+   - Last update timestamp
+   - Worker uptime
+   - Last successful run timestamp
+   - Current health status
+   - Status message
+4. Handles graceful shutdown on SIGINT/SIGTERM signals
+5. Provides detailed logging in `data/worker.log`
+
+For production deployments, you can run the worker as a background process:
+
+```bash
+# Run as a background process
+nohup python worker.py > /dev/null 2>&1 &
 ```
 
 ### Using Cron
