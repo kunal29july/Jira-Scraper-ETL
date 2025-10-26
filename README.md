@@ -380,7 +380,7 @@ nohup python worker.py > /dev/null 2>&1 &
 crontab -e
 
 # Add this line to run every hour
-0 * * * * cd /path/to/jira_scraper_project && python main.py >> /path/to/jira_scraper_project/data/cron.log 2>&1
+cd /path/to/jira_scraper_project && python main.py >> /path/to/jira_scraper_project/data/cron.log 2>&1
 ```
 
 ### Using Make Commands
@@ -403,56 +403,6 @@ make project PROJECT=HADOOP
 make worker
 make worker-interval INTERVAL=1
 ```
-
-## Error Handling & Fault Tolerance
-
-The pipeline includes several mechanisms to ensure reliability:
-
-- **Checkpointing**: 
-  - Saves progress after each page of issues is processed
-  - Stores both pagination position and last update timestamp
-  - Enables efficient resumption after interruptions
-  - Separate checkpoint files for each project
-
-- **Exponential backoff**: 
-  - Retries with increasing delays for transient errors
-  - Formula: `wait = backoff_base ** attempt`
-  - Configurable maximum attempts
-  - Different handling for different error types (429 vs 5xx)
-
-- **Graceful degradation**: 
-  - Continues processing even if some issues fail
-  - Skips problematic issues rather than failing the entire run
-  - Records errors in logs for later investigation
-
-- **Comprehensive logging**: 
-  - Detailed logs for debugging and monitoring
-  - Separate log files for extraction and transformation
-  - Configurable log levels
-  - Timestamps and context for all log entries
-
-## Testing Framework
-
-The project includes a comprehensive test suite to verify functionality:
-
-- **Unit Tests**: Test individual functions and methods
-- **Integration Tests**: Test interactions between components
-- **Mock Tests**: Use mocks to simulate API responses and errors
-
-### Test Coverage
-
-- **Extraction Tests**:
-  - Test pagination handling
-  - Test rate limit handling
-  - Test error handling and retries
-  - Test checkpoint saving and loading
-  - Test incremental updates
-
-- **Transformation Tests**:
-  - Test text cleaning functions
-  - Test derived task generation
-  - Test data validation
-  - Test error handling during transformation
 
 ### Running Tests
 
