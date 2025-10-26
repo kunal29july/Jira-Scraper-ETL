@@ -1,0 +1,17 @@
+# Core dependencies
+requests>=2.28.0
+schedule>=1.1.0
+
+# Logging and error handling
+python-json-logger>=2.0.4
+
+# Data processing
+jsonschema>=4.17.0  # For JSON validation
+
+# Command line interface
+argparse>=1.4.0
+
+# Testing (optional)
+pytest>=7.0.0
+pytest-cov>=4.0.0
+responses>=0.22.0  # For mocking HTTP requests in tests

@@ -1,0 +1,15 @@
+{
+  "projects": [
+    "HADOOP",
+    "SPARK",
+    "KAFKA"
+  ],
+  "max_results": 50,
+  "polite_delay_seconds": 2,
+  "rate_limit_sleep_seconds": 30,
+  "retry_backoff_base": 2,
+  "max_retries": 5,
+  "incremental": true,
+  "lookback_days": 7,
+  "verify_ssl": false
+}
